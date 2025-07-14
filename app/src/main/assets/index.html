@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BLE Parçalı Veri Gönderici</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            font-weight: 300;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 1.1em;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .status-bar {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 30px;
+            border-left: 4px solid #007bff;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #dc3545;
+            animation: pulse 2s infinite;
+        }
+
+        .status-dot.connected {
+            background: #28a745;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 25px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .btn.success {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            box-shadow: 0 4px 15px rgba(40, 167, 69, 0.3);
+        }
+
+        .btn.success:hover {
+            box-shadow: 0 6px 20px rgba(40, 167, 69, 0.4);
+        }
+
+        .input-group {
+            margin-bottom: 25px;
+        }
+
+        .input-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .input-group textarea {
+            width: 100%;
+            min-height: 200px;
+            padding: 15px;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            resize: vertical;
+            transition: border-color 0.3s ease;
+        }
+
+        .input-group textarea:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .progress-container {
+            margin: 20px 0;
+            display: none;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e9ecef;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #28a745, #20c997);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .progress-text {
+            text-align: center;
+            margin-top: 10px;
+            font-weight: 500;
+            color: #666;
+        }
+
+        .logs {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 30px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .logs h3 {
+            margin-bottom: 15px;
+            color: #333;
+        }
+
+        .log-entry {
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            color: #666;
+            margin-bottom: 5px;
+            padding: 5px 0;
+            border-bottom: 1px solid #e9ecef;
+        }
+
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+
+        .sample-btn {
+            background: #6c757d;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-left: 10px;
+        }
+
+        .sample-btn:hover {
+            background: #5a6268;
+        }
+
+        .char-count {
+            text-align: right;
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+        }
+
+        .alert {
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border-left: 4px solid;
+        }
+
+        .alert.success {
+            background: #d4edda;
+            border-color: #28a745;
+            color: #155724;
+        }
+
+        .alert.error {
+            background: #f8d7da;
+            border-color: #dc3545;
+            color: #721c24;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔗 BLE Parçalı Veri Gönderici</h1>
+            <p>ESP32 ile uzun JSON verilerini güvenli bir şekilde gönderin</p>
+        </div>
+
+        <div class="content">
+            <!-- Durum Çubuğu -->
+            <div class="status-bar">
+                <div class="status-indicator">
+                    <div class="status-dot" id="statusDot"></div>
+                    <span id="statusText">ESP32 ile bağlantı bekleniyor...</span>
+                </div>
+                <button class="btn" id="connectBtn" onclick="connectToBLE()">
+                    📱 ESP32'ye Bağlan
+                </button>
+            </div>
+
+            <!-- Uyarı Mesajları -->
+            <div id="alertContainer"></div>
+
+            <!-- JSON Giriş Alanı -->
+            <div class="input-group">
+                <label for="jsonInput">
+                    📝 JSON Verisi
+                    <button class="sample-btn" onclick="insertSampleJson()">Örnek Ekle</button>
+                </label>
+                <textarea 
+                    id="jsonInput" 
+                    placeholder="JSON verinizi buraya girin..."
+                ></textarea>
+                <div class="char-count" id="charCount">Karakter sayısı: 0</div>
+            </div>
+
+            <!-- Gönder Butonu -->
+            <button class="btn success" id="sendBtn" onclick="sendChunkedJson()">
+                🚀 Parçalı Olarak Gönder
+            </button>
+
+            <!-- İlerleme Çubuğu -->
+            <div class="progress-container" id="progressContainer">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <div class="progress-text" id="progressText">Gönderiliyor... 0%</div>
+            </div>
+
+            <!-- Loglar -->
+            <div class="logs">
+                <h3>📋 Aktivite Günlüğü</h3>
+                <div id="logContainer">
+                    <div class="log-entry">Sistem hazır, ESP32 bağlantısı bekleniyor...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let bleCharacteristic = null;
+        let isConnected = false;
+        let isSending = false;
+
+        // DOM elementleri
+        const statusDot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+        const connectBtn = document.getElementById('connectBtn');
+        const sendBtn = document.getElementById('sendBtn');
+        const jsonInput = document.getElementById('jsonInput');
+        const charCount = document.getElementById('charCount');
+        const progressContainer = document.getElementById('progressContainer');
+        const progressFill = document.getElementById('progressFill');
+        const progressText = document.getElementById('progressText');
+        const logContainer = document.getElementById('logContainer');
+        const alertContainer = document.getElementById('alertContainer');
+
+        // Karakter sayacı
+        jsonInput.addEventListener('input', function() {
+            charCount.textContent = `Karakter sayısı: ${this.value.length}`;
+            updateSendButton();
+        });
+
+        // Log ekleme fonksiyonu
+        function addLog(message) {
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.className = 'log-entry';
+            logEntry.textContent = `${timestamp}: ${message}`;
+            logContainer.appendChild(logEntry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+
+            // Maksimum 50 log tutma
+            while (logContainer.children.length > 50) {
+                logContainer.removeChild(logContainer.firstChild);
+            }
+        }
+
+        // Uyarı mesajı gösterme
+        function showAlert(message, type = 'success') {
+            alertContainer.innerHTML = `
+                <div class="alert ${type}">
+                    ${message}
+                </div>
+            `;
+
+            setTimeout(() => {
+                alertContainer.innerHTML = '';
+            }, type === 'error' ? 5000 : 3000);
+        }
+
+        // Durum güncelleme
+        function updateStatus(text, connected = false) {
+            statusText.textContent = text;
+            statusDot.className = connected ? 'status-dot connected' : 'status-dot';
+            isConnected = connected;
+            updateSendButton();
+        }
+
+        // Gönder butonu durumu
+        function updateSendButton() {
+            sendBtn.disabled = !isConnected || isSending || !jsonInput.value.trim();
+        }
+
+        // BLE bağlantısı (Android Native Bridge kullanarak)
+        function connectToBLE() {
+            if (!window.AndroidBluetooth) {
+                showAlert('Android Bluetooth bridge bulunamadı!', 'error');
+                return;
+            }
+
+            connectBtn.disabled = true;
+            connectBtn.textContent = '🔄 Bağlanıyor...';
+
+            try {
+                // Android native bridge'i çağır
+                AndroidBluetooth.connectToESP32();
+
+            } catch (error) {
+                addLog(`❌ Bağlantı hatası: ${error.message}`);
+                showAlert('Bağlantı kurulamadı: ' + error.message, 'error');
+                updateStatus('Bağlantı başarısız', false);
+
+                connectBtn.disabled = false;
+                connectBtn.textContent = '📱 ESP32\'ye Bağlan';
+            }
+        }
+
+        // Session ID oluşturma
+        function generateSessionId() {
+            return Math.random().toString(36).substr(2, 9);
+        }
+
+        // Veriyi parçalama
+        function chunkData(data, chunkSize = 100) {
+            const chunks = [];
+            for (let i = 0; i < data.length; i += chunkSize) {
+                chunks.push(data.slice(i, i + chunkSize));
+            }
+            return chunks;
+        }
+
+        // Parçalı JSON gönderme (Android Native Bridge kullanarak)
+        function sendChunkedJson() {
+            if (!window.AndroidBluetooth) {
+                showAlert('Android Bluetooth bridge bulunamadı!', 'error');
+                return;
+            }
+
+            // Bağlantı kontrolü
+            if (!AndroidBluetooth.isBluetoothConnected()) {
+                showAlert('Önce ESP32 ile bağlantı kurun!', 'error');
+                return;
+            }
+
+            const jsonText = jsonInput.value.trim();
+            if (!jsonText) {
+                showAlert('JSON verisi boş olamaz!', 'error');
+                return;
+            }
+
+            // JSON geçerliliğini kontrol et
+            try {
+                JSON.parse(jsonText);
+            } catch (error) {
+                showAlert('Geçersiz JSON formatı!', 'error');
+                addLog('❌ JSON format hatası');
+                return;
+            }
+
+            isSending = true;
+            updateSendButton();
+            sendBtn.textContent = '⏳ Gönderiliyor...';
+            progressContainer.style.display = 'block';
+
+            try {
+                // Android native bridge'i çağır
+                AndroidBluetooth.sendChunkedData(jsonText);
+
+            } catch (error) {
+                addLog(`❌ Gönderim hatası: ${error.message}`);
+                showAlert('Gönderim sırasında hata oluştu: ' + error.message, 'error');
+
+                isSending = false;
+                updateSendButton();
+                sendBtn.textContent = '🚀 Parçalı Olarak Gönder';
+                progressContainer.style.display = 'none';
+                progressFill.style.width = '0%';
+            }
+        }
+
+        // Örnek JSON ekleme
+        function insertSampleJson() {
+            const sampleJson = {
+                "code": "from machine import Pin\nimport time\n\n# LED pin tanımla\nled = Pin(2, Pin.OUT)\n\n# 10 kez yanıp söndür\nfor i in range(10):\n    led.on()\n    time.sleep(0.5)\n    led.off()\n    time.sleep(0.5)\n    print(f\"LED {i+1}. kez yanıp söndü\")\n\nprint(\"LED test tamamlandı!\")",
+                "description": "ESP32 LED test kodu - 10 kez yanıp söndürür",
+                "author": "BLE Test",
+                "version": "1.0.0",
+                "timestamp": new Date().toISOString()
+            };
+
+            jsonInput.value = JSON.stringify(sampleJson, null, 2);
+            charCount.textContent = `Karakter sayısı: ${jsonInput.value.length}`;
+            updateSendButton();
+            addLog('📝 Örnek JSON eklendi');
+        }
+
+        // Progress güncelleme (Android'den çağrılır)
+        function updateProgress(progress) {
+            progressFill.style.width = progress + '%';
+            progressText.textContent = `Gönderiliyor... ${Math.round(progress)}%`;
+        }
+
+        // Gönderim tamamlandığında çağrılır (Android'den)
+        function onSendComplete() {
+            isSending = false;
+            updateSendButton();
+            sendBtn.textContent = '🚀 Parçalı Olarak Gönder';
+            progressContainer.style.display = 'none';
+            progressFill.style.width = '0%';
+        }
+
+        // Bağlantı durumu güncelleme (Android'den çağrılır)
+        function onConnectionSuccess() {
+            connectBtn.textContent = '✅ Bağlı';
+            connectBtn.style.background = '#28a745';
+            connectBtn.disabled = false;
+        }
+
+        // Bağlantı başarısız (Android'den çağrılır)
+        function onConnectionFailed() {
+            connectBtn.disabled = false;
+            connectBtn.textContent = '📱 ESP32\'ye Bağlan';
+            updateStatus('Bağlantı başarısız', false);
+        }
+
+        // Gönderim başarısız (Android'den çağrılır)
+        function onSendFailed() {
+            isSending = false;
+            updateSendButton();
+            sendBtn.textContent = '🚀 Parçalı Olarak Gönder';
+            progressContainer.style.display = 'none';
+            progressFill.style.width = '0%';
+        }
+
+        // Sayfa yüklendiğinde
+        document.addEventListener('DOMContentLoaded', function() {
+            addLog('🚀 Sistem başlatıldı');
+            updateSendButton();
+        });
+    </script>
+</body>
+</html>
