@@ -122,6 +122,13 @@ class MainActivity : AppCompatActivity() {
         fun connectToESP32() {
             Log.d(TAG, "ESP32 bağlantısı başlatılıyor...")
             
+            // Önce mevcut bağlantıyı temizle
+            if (bluetoothGatt != null) {
+                bluetoothGatt?.close()
+                bluetoothGatt = null
+                isConnected = false
+            }
+            
             // İzinleri kontrol et
             val permissions = mutableListOf<String>()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -156,8 +163,20 @@ class MainActivity : AppCompatActivity() {
                 return
             }
             
+            // Location servislerinin açık olup olmadığını kontrol et
+            val locationManager = getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager
+            val isLocationEnabled = locationManager.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER) ||
+                    locationManager.isProviderEnabled(android.location.LocationManager.NETWORK_PROVIDER)
+            
+            if (!isLocationEnabled && Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                callJavaScript("showAlert('Konum servisleri kapalı! BLE tarama için gerekli.', 'error')")
+                callJavaScript("onConnectionFailed()")
+                return
+            }
+            
             bluetoothLeScanner = bluetoothAdapter.bluetoothLeScanner
             if (bluetoothLeScanner != null) {
+                callJavaScript("addLog('🔍 Bluetooth LE Scanner hazır')")
                 startScan()
             } else {
                 callJavaScript("showAlert('Bluetooth LE tarama desteklenmiyor!', 'error')")
@@ -192,50 +211,79 @@ class MainActivity : AppCompatActivity() {
         isScanning = true
         callJavaScript("addLog('🔍 ESP32 cihazı aranıyor...')")
         
+        // Scan callback'i sınıf seviyesinde tanımla
+        val scanCallback = createScanCallback()
+        
+        try {
+            bluetoothLeScanner?.startScan(scanCallback)
+            callJavaScript("addLog('✅ Bluetooth tarama başlatıldı')")
+        } catch (e: Exception) {
+            Log.e(TAG, "Scan başlatma hatası: ${e.message}")
+            callJavaScript("showAlert('Bluetooth tarama başlatılamadı: ${e.message}', 'error')")
+            callJavaScript("onConnectionFailed()")
+            isScanning = false
+            return
+        }
+        
+        // 15 saniye sonra taramayı durdur (10'dan 15'e çıkardık)
+        handler.postDelayed({
+            if (isScanning) {
+                stopScan()
+                callJavaScript("showAlert('ESP32 cihazı bulunamadı! Tekrar deneyin.', 'error')")
+                callJavaScript("onConnectionFailed()")
+            }
+        }, 15000)
+    }
+    
+    private fun createScanCallback(): ScanCallback {
         val scanCallback = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult?) {
                 result?.let { scanResult ->
                     val device = scanResult.device
                     val deviceName = device.name
                     
-                    Log.d(TAG, "Cihaz bulundu: $deviceName")
+                    Log.d(TAG, "Cihaz bulundu: $deviceName, MAC: ${device.address}")
+                    callJavaScript("addLog('📱 Cihaz bulundu: ${deviceName ?: "Bilinmeyen"} (${device.address})')")
                     
-                    if (deviceName == "ESP32_JSON_BLE") {
+                    // ESP32 cihaz adını daha esnek kontrol et
+                    if (deviceName != null && (deviceName.contains("ESP32") || deviceName == "ESP32_JSON_BLE")) {
                         stopScan()
                         callJavaScript("addLog('📱 ESP32 cihazı bulundu: $deviceName')")
                         connectToDevice(device)
+                    } else if (deviceName == null) {
+                        // Cihaz adı null ise MAC adresine göre kontrol et (opsiyonel)
+                        callJavaScript("addLog('⚠️ İsimsiz cihaz bulundu: ${device.address}')")
                     }
                 }
             }
             
             override fun onScanFailed(errorCode: Int) {
-                Log.e(TAG, "Scan failed: $errorCode")
+                Log.e(TAG, "Bluetooth tarama başarısız: $errorCode")
                 isScanning = false
-                callJavaScript("showAlert('Bluetooth tarama başarısız!', 'error')")
+                val errorMessage = when(errorCode) {
+                    SCAN_FAILED_ALREADY_STARTED -> "Tarama zaten başlatılmış"
+                    SCAN_FAILED_APPLICATION_REGISTRATION_FAILED -> "Uygulama kaydı başarısız"
+                    SCAN_FAILED_FEATURE_UNSUPPORTED -> "BLE özelliği desteklenmiyor"
+                    SCAN_FAILED_INTERNAL_ERROR -> "İç hata"
+                    else -> "Bilinmeyen hata: $errorCode"
+                }
+                callJavaScript("showAlert('Bluetooth tarama başarısız: $errorMessage', 'error')")
                 callJavaScript("onConnectionFailed()")
             }
         }
-        
-        bluetoothLeScanner?.startScan(scanCallback) ?: run {
-            callJavaScript("showAlert('Bluetooth LE scanner null!', 'error')")
-            callJavaScript("onConnectionFailed()")
-        }
-        
-        // 10 saniye sonra taramayı durdur
-        handler.postDelayed({
-            if (isScanning) {
-                stopScan()
-                callJavaScript("showAlert('ESP32 cihazı bulunamadı!', 'error')")
-                callJavaScript("onConnectionFailed()")
-            }
-        }, 10000)
+        return scanCallback
     }
     
     @SuppressLint("MissingPermission")
     private fun stopScan() {
         if (!isScanning) return
         isScanning = false
-        bluetoothLeScanner?.stopScan(object : ScanCallback() {})
+        try {
+            bluetoothLeScanner?.stopScan(object : ScanCallback() {})
+            callJavaScript("addLog('🛑 Bluetooth tarama durduruldu')")
+        } catch (e: Exception) {
+            Log.e(TAG, "Scan durdurma hatası: ${e.message}")
+        }
     }
     
     @SuppressLint("MissingPermission")
@@ -258,14 +306,19 @@ class MainActivity : AppCompatActivity() {
                         isConnected = true
                         callJavaScript("addLog('✅ GATT bağlantısı kuruldu')")
                         callJavaScript("updateStatus('ESP32 ile bağlantı kuruldu!', true)")
-                        gatt?.discoverServices()
+                        // Servis keşfi için kısa bir bekleme
+                        handler.postDelayed({
+                            gatt?.discoverServices()
+                        }, 1000)
                     }
                     BluetoothProfile.STATE_DISCONNECTED -> {
                         Log.d(TAG, "GATT bağlantısı kesildi")
                         isConnected = false
+                        bluetoothGattCharacteristic = null
                         callJavaScript("addLog('❌ GATT bağlantısı kesildi')")
                         callJavaScript("updateStatus('ESP32 ile bağlantı kesildi', false)")
                         callJavaScript("onConnectionFailed()")
+                        gatt?.close()
                     }
                 }
             }

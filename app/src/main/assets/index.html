@@ -368,11 +368,13 @@
         function connectToBLE() {
             if (!window.AndroidBluetooth) {
                 showAlert('Android Bluetooth bridge bulunamadı!', 'error');
+                addLog('❌ AndroidBluetooth bridge mevcut değil');
                 return;
             }
 
             connectBtn.disabled = true;
             connectBtn.textContent = '🔄 Bağlanıyor...';
+            addLog('🔄 Bağlantı işlemi başlatılıyor...');
 
             try {
                 // Android native bridge'i çağır
@@ -484,6 +486,8 @@
 
         // Bağlantı durumu güncelleme (Android'den çağrılır)
         function onConnectionSuccess() {
+            addLog('✅ Bağlantı başarılı!');
+            updateStatus('ESP32 ile bağlandı ✅', true);
             connectBtn.textContent = '✅ Bağlı';
             connectBtn.style.background = '#28a745';
             connectBtn.disabled = false;
@@ -491,9 +495,10 @@
 
         // Bağlantı başarısız (Android'den çağrılır)
         function onConnectionFailed() {
+            addLog('❌ Bağlantı başarısız');
+            updateStatus('Bağlantı başarısız ❌', false);
             connectBtn.disabled = false;
             connectBtn.textContent = '📱 ESP32\'ye Bağlan';
-            updateStatus('Bağlantı başarısız', false);
         }
 
         // Gönderim başarısız (Android'den çağrılır)
