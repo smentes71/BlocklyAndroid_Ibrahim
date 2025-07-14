@@ -361,6 +361,15 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             }
+            
+            override fun onCharacteristicWrite(gatt: BluetoothGatt?, characteristic: BluetoothGattCharacteristic?, status: Int) {
+                if (status == BluetoothGatt.GATT_SUCCESS) {
+                    Log.d(TAG, "Characteristic yazma başarılı")
+                } else {
+                    Log.e(TAG, "Characteristic yazma başarısız: $status")
+                    callJavaScript("addLog('❌ Yazma hatası: $status')")
+                }
+            }
         }
         
         bluetoothGatt = device.connectGatt(this, false, gattCallback)
@@ -381,10 +390,11 @@ class MainActivity : AppCompatActivity() {
     private fun sendDataInChunks(jsonData: String) {
         try {
             val sessionId = generateSessionId()
-            val chunkSize = 80
+            val chunkSize = 100  // Chunk boyutunu artırdık
             val chunks = jsonData.chunked(chunkSize)
             
             callJavaScript("addLog('📦 Veri ${chunks.size} parçaya bölündü (Session: $sessionId)')")
+            callJavaScript("updateProgress(0)")
             
             for (i in chunks.indices) {
                 val chunkJson = JSONObject().apply {
@@ -395,18 +405,45 @@ class MainActivity : AppCompatActivity() {
                 }.toString()
                 
                 bluetoothGattCharacteristic?.let { characteristic ->
-                    characteristic.value = chunkJson.toByteArray()
+                    // Characteristic'in yazma özelliğini kontrol et
+                    val properties = characteristic.properties
+                    if ((properties and BluetoothGattCharacteristic.PROPERTY_WRITE) == 0 &&
+                        (properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) == 0) {
+                        callJavaScript("showAlert('ESP32 characteristic yazma desteklemiyor!', 'error')")
+                        callJavaScript("onSendFailed()")
+                        return
+                    }
+                    
+                    // Veriyi UTF-8 olarak encode et
+                    val dataBytes = chunkJson.toByteArray(Charsets.UTF_8)
+                    
+                    // MTU boyutunu kontrol et (genellikle 20-23 byte)
+                    if (dataBytes.size > 512) {  // Güvenli limit
+                        callJavaScript("showAlert('Parça boyutu çok büyük! (${dataBytes.size} bytes)', 'error')")
+                        callJavaScript("onSendFailed()")
+                        return
+                    }
+                    
+                    characteristic.value = dataBytes
+                    
+                    // Write type'ı ayarla
+                    characteristic.writeType = if ((properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0) {
+                        BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                    } else {
+                        BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                    }
+                    
                     val success = bluetoothGatt?.writeCharacteristic(characteristic) ?: false
                     
                     if (success) {
                         val progress = ((i + 1) * 100) / chunks.size
-                        callJavaScript("addLog('📤 Parça ${i + 1}/${chunks.size} gönderildi')")
+                        callJavaScript("addLog('📤 Parça ${i + 1}/${chunks.size} gönderildi (${dataBytes.size} bytes)')")
                         callJavaScript("updateProgress($progress)")
                         
-                        // Parçalar arası bekleme
-                        Thread.sleep(200)
+                        // Parçalar arası bekleme süresini artır
+                        Thread.sleep(300)
                     } else {
-                        callJavaScript("showAlert('Veri gönderimi başarısız!', 'error')")
+                        callJavaScript("showAlert('Parça ${i + 1} gönderimi başarısız!', 'error')")
                         callJavaScript("onSendFailed()")
                         return
                     }
