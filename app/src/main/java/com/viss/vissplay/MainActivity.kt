@@ -39,6 +39,10 @@ class MainActivity : AppCompatActivity() {
     private var bluetoothGattCharacteristic: BluetoothGattCharacteristic? = null
     private var isScanning = false
     private var isConnected = false
+    private var isWriting = false
+    private var writeQueue = mutableListOf<ByteArray>()
+    private var currentChunkIndex = 0
+    private var totalChunks = 0
     private val handler = Handler(Looper.getMainLooper())
     
     // ESP32 Service ve Characteristic UUID'leri
@@ -363,11 +367,35 @@ class MainActivity : AppCompatActivity() {
             }
             
             override fun onCharacteristicWrite(gatt: BluetoothGatt?, characteristic: BluetoothGattCharacteristic?, status: Int) {
+                isWriting = false
+                
                 if (status == BluetoothGatt.GATT_SUCCESS) {
-                    Log.d(TAG, "Characteristic yazma başarılı")
+                    Log.d(TAG, "Parça ${currentChunkIndex + 1}/$totalChunks yazma başarılı")
+                    currentChunkIndex++
+                    
+                    val progress = (currentChunkIndex * 100) / totalChunks
+                    callJavaScript("addLog('📤 Parça $currentChunkIndex/$totalChunks gönderildi')")
+                    callJavaScript("updateProgress($progress)")
+                    
+                    // Sonraki parçayı gönder
+                    if (writeQueue.isNotEmpty()) {
+                        handler.postDelayed({
+                            sendNextChunk()
+                        }, 200) // 200ms bekleme
+                    } else {
+                        // Tüm parçalar gönderildi
+                        callJavaScript("addLog('✅ Tüm parçalar başarıyla gönderildi!')")
+                        callJavaScript("showAlert('$totalChunks parça halinde JSON başarıyla gönderildi!', 'success')")
+                        callJavaScript("onSendComplete()")
+                    }
                 } else {
-                    Log.e(TAG, "Characteristic yazma başarısız: $status")
-                    callJavaScript("addLog('❌ Yazma hatası: $status')")
+                    Log.e(TAG, "Parça ${currentChunkIndex + 1} yazma başarısız: $status")
+                    callJavaScript("addLog('❌ Parça ${currentChunkIndex + 1} yazma hatası: $status')")
+                    callJavaScript("showAlert('Parça ${currentChunkIndex + 1} gönderimi başarısız!', 'error')")
+                    callJavaScript("onSendFailed()")
+                    
+                    // Kuyruğu temizle
+                    writeQueue.clear()
                 }
             }
         }
@@ -390,12 +418,18 @@ class MainActivity : AppCompatActivity() {
     private fun sendDataInChunks(jsonData: String) {
         try {
             val sessionId = generateSessionId()
-            val chunkSize = 100  // Chunk boyutunu artırdık
+            val chunkSize = 80  // Chunk boyutunu küçülttük
             val chunks = jsonData.chunked(chunkSize)
+            
+            // Global değişkenleri ayarla
+            currentChunkIndex = 0
+            totalChunks = chunks.size
+            writeQueue.clear()
             
             callJavaScript("addLog('📦 Veri ${chunks.size} parçaya bölündü (Session: $sessionId)')")
             callJavaScript("updateProgress(0)")
             
+            // Tüm parçaları kuyruğa ekle
             for (i in chunks.indices) {
                 val chunkJson = JSONObject().apply {
                     put("sessionId", sessionId)
@@ -404,60 +438,59 @@ class MainActivity : AppCompatActivity() {
                     put("data", chunks[i])
                 }.toString()
                 
-                bluetoothGattCharacteristic?.let { characteristic ->
-                    // Characteristic'in yazma özelliğini kontrol et
-                    val properties = characteristic.properties
-                    if ((properties and BluetoothGattCharacteristic.PROPERTY_WRITE) == 0 &&
-                        (properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) == 0) {
-                        callJavaScript("showAlert('ESP32 characteristic yazma desteklemiyor!', 'error')")
-                        callJavaScript("onSendFailed()")
-                        return
-                    }
-                    
-                    // Veriyi UTF-8 olarak encode et
-                    val dataBytes = chunkJson.toByteArray(Charsets.UTF_8)
-                    
-                    // MTU boyutunu kontrol et (genellikle 20-23 byte)
-                    if (dataBytes.size > 512) {  // Güvenli limit
-                        callJavaScript("showAlert('Parça boyutu çok büyük! (${dataBytes.size} bytes)', 'error')")
-                        callJavaScript("onSendFailed()")
-                        return
-                    }
-                    
-                    characteristic.value = dataBytes
-                    
-                    // Write type'ı ayarla
-                    characteristic.writeType = if ((properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0) {
-                        BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-                    } else {
-                        BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-                    }
-                    
-                    val success = bluetoothGatt?.writeCharacteristic(characteristic) ?: false
-                    
-                    if (success) {
-                        val progress = ((i + 1) * 100) / chunks.size
-                        callJavaScript("addLog('📤 Parça ${i + 1}/${chunks.size} gönderildi (${dataBytes.size} bytes)')")
-                        callJavaScript("updateProgress($progress)")
-                        
-                        // Parçalar arası bekleme süresini artır
-                        Thread.sleep(300)
-                    } else {
-                        callJavaScript("showAlert('Parça ${i + 1} gönderimi başarısız!', 'error')")
-                        callJavaScript("onSendFailed()")
-                        return
-                    }
+                val dataBytes = chunkJson.toByteArray(Charsets.UTF_8)
+                
+                // MTU boyutunu kontrol et
+                if (dataBytes.size > 400) {  // Daha güvenli limit
+                    callJavaScript("showAlert('Parça boyutu çok büyük! (${dataBytes.size} bytes)', 'error')")
+                    callJavaScript("onSendFailed()")
+                    return
                 }
+                
+                writeQueue.add(dataBytes)
             }
             
-            callJavaScript("addLog('✅ Tüm parçalar başarıyla gönderildi!')")
-            callJavaScript("showAlert('${chunks.size} parça halinde JSON başarıyla gönderildi!', 'success')")
-            callJavaScript("onSendComplete()")
+            // İlk parçayı gönder
+            sendNextChunk()
             
         } catch (e: Exception) {
             Log.e(TAG, "Veri gönderimi hatası: ${e.message}")
             callJavaScript("showAlert('Veri gönderimi hatası: ${e.message}', 'error')")
             callJavaScript("onSendFailed()")
+        }
+    }
+    
+    @SuppressLint("MissingPermission")
+    private fun sendNextChunk() {
+        if (writeQueue.isEmpty() || isWriting) {
+            return
+        }
+        
+        bluetoothGattCharacteristic?.let { characteristic ->
+            // Characteristic'in yazma özelliğini kontrol et
+            val properties = characteristic.properties
+            if ((properties and BluetoothGattCharacteristic.PROPERTY_WRITE) == 0 &&
+                (properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) == 0) {
+                callJavaScript("showAlert('ESP32 characteristic yazma desteklemiyor!', 'error')")
+                callJavaScript("onSendFailed()")
+                return
+            }
+            
+            val dataBytes = writeQueue.removeAt(0)
+            characteristic.value = dataBytes
+            
+            // Write type'ı ayarla - WRITE_TYPE_DEFAULT kullan (yanıt bekle)
+            characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+            
+            isWriting = true
+            val success = bluetoothGatt?.writeCharacteristic(characteristic) ?: false
+            
+            if (!success) {
+                isWriting = false
+                callJavaScript("showAlert('Parça ${currentChunkIndex + 1} gönderimi başarısız!', 'error')")
+                callJavaScript("onSendFailed()")
+                writeQueue.clear()
+            }
         }
     }
     
