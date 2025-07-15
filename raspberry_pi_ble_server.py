@@ -368,7 +368,7 @@ class JSONAdvertisement(Advertisement):
     def __init__(self, bus, index):
         Advertisement.__init__(self, bus, index, 'peripheral')
         self.add_service_uuid('12345678-1234-1234-1234-123456789abc')
-        self.add_local_name('RPI_BLE_JSON')
+        self.add_local_name('ESP32_JSON_BLE')
         self.include_tx_power = True
 
     def add_service_uuid(self, uuid):
